@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>在庫管理システム</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      font-family: 'Noto Sans JP', sans-serif;
+      margin: 20px;
+      background-color: #f4f8fb;
+      color: #333;
+    }
+    .container {
+      max-width: 600px;
+      margin: auto;
+      padding: 10px;
+    }
+    h1 {
+      color: #0056b3;
+      text-align: center;
+    }
+    .search-container {
+      display: flex;
+      flex-wrap: wrap; /* ボタンが重ならないようwrap */
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .search-container input[type="text"] {
+      flex: 1;
+      min-width: 0;
+      padding: 10px;
+      font-size: 1rem;
+      margin-right: 10px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+    }
+    .search-container button {
+      padding: 10px 20px;
+      font-size: 1rem;
+      background-color: #0056b3;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      margin-top: 5px;
+    }
+    .search-container button:not(:first-of-type) {
+      margin-left: 10px;
+    }
+
+    #video-preview {
+      width: 100%;
+      max-height: 300px;
+      display: none;
+      border-radius: 8px;
+    }
+    .result-item {
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 20px;
+      margin: 15px 0;
+      background-color: #ffffff;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      position: relative;
+    }
+    .result-item h3 {
+      margin-top: 0;
+      color: #0056b3;
+    }
+    .result-item p {
+      margin: 5px 0;
+      color: #555;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+    .action-row {
+      margin-top: 10px;
+    }
+    .action-row input[type="number"] {
+      width: 60px;
+      margin: 0 10px;
+      padding: 5px;
+    }
+    .action-row button {
+      padding: 5px 10px;
+      margin: 0 5px;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    /* 編集フォーム・登録フォーム用スタイル */
+    .edit-form, .register-form {
+      margin-top: 15px;
+      padding: 10px;
+      background: #f9f9f9;
+      border: 1px dashed #aaa;
+    }
+    .edit-form label, .register-form label {
+      display: block;
+      margin: 8px 0 4px;
+      font-weight: bold;
+    }
+    .edit-form input[type="text"], .edit-form input[type="number"],
+    .register-form input[type="text"], .register-form input[type="number"] {
+      width: 100%;
+      padding: 5px;
+      margin-bottom: 5px;
+    }
+    .edit-form button, .register-form button {
+      margin: 5px 10px 0 0;
+    }
+    /* 履歴表示 */
+    #historyContainer {
+      margin-top: 30px;
+      padding: 10px;
+      background-color: #fff;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+    }
+    #historyContainer h2 {
+      margin-top: 0;
+      color: #0056b3;
+    }
+    .history-item {
+      margin: 5px 0;
+      font-size: 0.9rem;
+      color: #333;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>在庫管理システム</h1>
+
+    <!-- 検索・スキャン -->
+    <div class="search-container">
+      <input id="keywordInput" type="text" placeholder="検索キーワードを入力" />
+      <button id="searchBtn">検索</button>
+      <button id="scanBtn">スキャン</button>
+    </div>
+
+    <!-- バーコードスキャン用のVideo -->
+    <video id="video-preview" autoplay></video>
+    <div id="errorContainer" class="error-message"></div>
+
+    <!-- 検索結果を表示 -->
+    <div id="results"></div>
+
+    <!-- CSV出力ボタン -->
+    <button id="exportCsvBtn">CSV出力</button>
+
+    <!-- 直近10件の履歴を表示する領域 -->
+    <div id="historyContainer">
+      <h2>直近10件の履歴</h2>
+      <div id="historyList"></div>
+    </div>
+  </div>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.17.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.17.2/firebase-firestore-compat.js"></script>
+  <script src="https://unpkg.com/@zxing/library@latest"></script>
+  
+  <script>
+    // 🔹 Firebase設定
+    const firebaseConfig = {
+      apiKey: "AIzaSyCnRbmcPezD4Osisss6XebmU15ukBqttQw",
+      authDomain: "slack-bot-firebase-7991a.firebaseapp.com",
+      projectId: "slack-bot-firebase-7991a",
+      storageBucket: "slack-bot-firebase-7991a.firebasestorage.app",
+      messagingSenderId: "215585745043",
+      appId: "1:215585745043:web:0c70ac99c5066b56cd4566"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    // 🔸 いま現在の onSnapshot の解除用関数
+    let currentUnsubscribe = null;
+
+    document.addEventListener("DOMContentLoaded", function () {
+      const searchBtn = document.getElementById("searchBtn");
+      const scanBtn = document.getElementById("scanBtn");
+      const keywordInput = document.getElementById("keywordInput");
+      const video = document.getElementById("video-preview");
+      const resultsContainer = document.getElementById("results");
+      const exportBtn = document.getElementById("exportCsvBtn");
+
+      // ページ読込時、直近の履歴を読み込み
+      loadRecentHistory();
+
+      // 🔹 検索ボタンのクリック処理（手入力）
+      searchBtn.addEventListener("click", () => {
+        const keyword = keywordInput.value.trim();
+        if (!keyword) {
+          alert("検索キーワードを入力してください");
+          return;
+        }
+        searchProduct(keyword);
+      });
+
+      // 🔹 スキャンボタンのクリック処理（バーコード検索）
+      scanBtn.addEventListener("click", async () => {
+        try {
+          video.style.display = "block";
+          const codeReader = new ZXing.BrowserBarcodeReader();
+          
+          codeReader.decodeFromVideoDevice(undefined, video, (result, err) => {
+            if (result) {
+              keywordInput.value = result.text;
+              searchProduct(result.text, true); // 🔸 scanMode = true
+              codeReader.reset();
+              video.style.display = "none";
+            }
+          });
+        } catch (error) {
+          alert("カメラを使用できません：" + error.message);
+        }
+      });
+
+      /**
+       * 🔹 Firestore検索処理（手入力 or バーコード）をonSnapshotでリアルタイム化
+       *   - scanMode が true のときは「バーコードスキャン」で
+       *     該当なしの場合に新規登録フォーム表示
+       */
+      function searchProduct(keyword, scanMode = false) {
+        // 既に onSnapshot を張っていた場合は解除
+        if (currentUnsubscribe) {
+          currentUnsubscribe();
+          currentUnsubscribe = null;
+        }
+
+        resultsContainer.innerHTML = `<p>「${keyword}」で検索中...</p>`;
+
+        // 🔸 onSnapshot でリアルタイムリスナーを設定
+        const query = db.collection("products").where("barcode", "==", keyword);
+
+        currentUnsubscribe = query.onSnapshot(
+          (querySnapshot) => {
+            resultsContainer.innerHTML = "";
+            if (!querySnapshot.empty) {
+              // 該当商品が見つかった場合
+              querySnapshot.forEach((doc) => {
+                const product = doc.data();
+                displayProductInfo(doc.id, product);
+              });
+            } else {
+              // 該当商品が見つからない
+              resultsContainer.innerHTML = "<p>該当する商品が見つかりません</p>";
+
+              // スキャンから来ていて商品が見つからない場合は、新規登録フォームを出す
+              if (scanMode) {
+                showRegisterForm(keyword);
+              }
+            }
+          },
+          (error) => {
+            console.error("検索エラー:", error);
+          }
+        );
+      }
+
+      // 🔹 新規登録フォーム表示 (既存機能をそのまま維持)
+      function showRegisterForm(scannedBarcode) {
+        // ...省略: 同じ実装（新規登録 + place, memo, urlなど）...
+        //        ※ここは既存のコードをそのまま残してください。
+        //        ※displayProductInfo, showEditForm, updateStock も変更なし
+        //        （掲載省略）
+      }
+
+      // 🔹 検索結果を表示 + 在庫更新機能 (既存の実装そのまま)
+      function displayProductInfo(productId, product) {
+        // ...省略: 在庫追加/減少, メモ, url表示, 編集ボタンなど...
+      }
+
+      // 🔹 Firestoreの在庫更新処理 (既存)
+      function updateStock(productId, newStock, oldStock) {
+        // ...省略: stock更新 + 履歴log
+      }
+
+      // 🔹 編集フォームを表示する (既存)
+      function showEditForm(itemDiv, productId, product) {
+        // ...省略: title, barcode, place, stock, memo, url の編集フォーム
+      }
+
+      // 🔹 変更点をまとめる（履歴表示用）(既存)
+      function buildChangeSummary(oldData, newData) {
+        // ...省略...
+      }
+
+      // 🔹 ログを "history" コレクションに追加 (既存)
+      function logHistory({ productId, changeType, description }) {
+        // ...省略...
+      }
+
+      // 🔹 直近10件の履歴を読み込み、表示 (既存)
+      function loadRecentHistory() {
+        // ...省略...
+      }
+
+      // 🔹 CSV出力ボタン: 全ドキュメントをCSVダウンロード (既存)
+      exportBtn.addEventListener("click", async () => {
+        // ...省略: CSV出力ロジック
+      });
+    });
+  </script>
+</body>
+</html>
