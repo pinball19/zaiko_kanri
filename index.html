@@ -179,9 +179,6 @@
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
 
-    // 🔸 いま現在の onSnapshot の解除用関数
-    let currentUnsubscribe = null;
-
     document.addEventListener("DOMContentLoaded", function () {
       const searchBtn = document.getElementById("searchBtn");
       const scanBtn = document.getElementById("scanBtn");
@@ -223,24 +220,16 @@
       });
 
       /**
-       * 🔹 Firestore検索処理（手入力 or バーコード）をonSnapshotでリアルタイム化
-       *   - scanMode が true のときは「バーコードスキャン」で
-       *     該当なしの場合に新規登録フォーム表示
+       * 🔹 Firestore検索処理（手入力 or バーコード）
+       *   - scanMode が true のときは「バーコードスキャン」で該当なしの場合に新規登録フォーム表示
        */
       function searchProduct(keyword, scanMode = false) {
-        // 既に onSnapshot を張っていた場合は解除
-        if (currentUnsubscribe) {
-          currentUnsubscribe();
-          currentUnsubscribe = null;
-        }
-
         resultsContainer.innerHTML = `<p>「${keyword}」で検索中...</p>`;
 
-        // 🔸 onSnapshot でリアルタイムリスナーを設定
-        const query = db.collection("products").where("barcode", "==", keyword);
-
-        currentUnsubscribe = query.onSnapshot(
-          (querySnapshot) => {
+        db.collection("products")
+          .where("barcode", "==", keyword)
+          .get()
+          .then((querySnapshot) => {
             resultsContainer.innerHTML = "";
             if (!querySnapshot.empty) {
               // 該当商品が見つかった場合
@@ -257,54 +246,514 @@
                 showRegisterForm(keyword);
               }
             }
-          },
-          (error) => {
+          })
+          .catch((error) => {
             console.error("検索エラー:", error);
-          }
-        );
+          });
       }
 
-      // 🔹 新規登録フォーム表示 (既存機能をそのまま維持)
+      // 🔹 新規登録フォーム表示
       function showRegisterForm(scannedBarcode) {
-        // ...省略: 同じ実装（新規登録 + place, memo, urlなど）...
-        //        ※ここは既存のコードをそのまま残してください。
-        //        ※displayProductInfo, showEditForm, updateStock も変更なし
-        //        （掲載省略）
+        const formDiv = document.createElement("div");
+        formDiv.classList.add("register-form");
+
+        const titleLabel = document.createElement("label");
+        titleLabel.textContent = "タイトル";
+        const titleInput = document.createElement("input");
+        titleInput.type = "text";
+
+        const barcodeLabel = document.createElement("label");
+        barcodeLabel.textContent = "バーコード";
+        const barcodeInput = document.createElement("input");
+        barcodeInput.type = "text";
+        barcodeInput.value = scannedBarcode || "";
+
+        const placeLabel = document.createElement("label");
+        placeLabel.textContent = "場所";
+        const placeInput = document.createElement("input");
+        placeInput.type = "text";
+
+        const stockLabel = document.createElement("label");
+        stockLabel.textContent = "在庫数";
+        const stockInput = document.createElement("input");
+        stockInput.type = "number";
+        stockInput.value = 0;
+
+        const memoLabel = document.createElement("label");
+        memoLabel.textContent = "メモ";
+        const memoInput = document.createElement("input");
+        memoInput.type = "text";
+
+        // 🔸 url フィールドを追加
+        const urlLabel = document.createElement("label");
+        urlLabel.textContent = "URL";
+        const urlInput = document.createElement("input");
+        urlInput.type = "text";
+
+        // 登録ボタン
+        const registerBtn = document.createElement("button");
+        registerBtn.textContent = "登録";
+        registerBtn.addEventListener("click", async () => {
+          // 入力値取得
+          const newTitle = titleInput.value.trim();
+          const newBarcode = barcodeInput.value.trim();
+          const newPlace = placeInput.value.trim();
+          const newStock = parseInt(stockInput.value, 10) || 0;
+          const newMemo = memoInput.value.trim();
+          const newUrl = urlInput.value.trim();
+
+          if (!newTitle) {
+            alert("タイトルを入力してください");
+            return;
+          }
+          if (!newBarcode) {
+            alert("バーコードを入力してください");
+            return;
+          }
+
+          // Firestoreに新規ドキュメント追加
+          try {
+            const docRef = await db.collection("products").add({
+              title: newTitle,
+              barcode: newBarcode,
+              place: newPlace,
+              stock: newStock,
+              memo: newMemo,
+              url: newUrl
+            });
+            alert("新規登録しました");
+
+            // 履歴ログにも残す
+            logHistory({
+              productId: docRef.id,
+              changeType: "新規登録",
+              description: `タイトル: ${newTitle}, バーコード: ${newBarcode}, 在庫: ${newStock}`
+            });
+
+            // 登録後にフォームを消して再検索
+            formDiv.remove();
+            searchProduct(newBarcode);
+          } catch (err) {
+            console.error("新規登録エラー:", err);
+            alert("登録に失敗しました");
+          }
+        });
+
+        // キャンセルボタン
+        const cancelBtn = document.createElement("button");
+        cancelBtn.textContent = "キャンセル";
+        cancelBtn.addEventListener("click", () => {
+          formDiv.remove();
+        });
+
+        // フォーム要素をまとめて追加
+        formDiv.appendChild(titleLabel);
+        formDiv.appendChild(titleInput);
+        formDiv.appendChild(barcodeLabel);
+        formDiv.appendChild(barcodeInput);
+        formDiv.appendChild(placeLabel);
+        formDiv.appendChild(placeInput);
+        formDiv.appendChild(stockLabel);
+        formDiv.appendChild(stockInput);
+        formDiv.appendChild(memoLabel);
+        formDiv.appendChild(memoInput);
+        formDiv.appendChild(urlLabel);
+        formDiv.appendChild(urlInput);
+        formDiv.appendChild(registerBtn);
+        formDiv.appendChild(cancelBtn);
+
+        // 結果表示エリアに追加
+        resultsContainer.appendChild(formDiv);
       }
 
-      // 🔹 検索結果を表示 + 在庫更新機能 (既存の実装そのまま)
+      // 🔹 検索結果を表示 + 在庫更新機能
       function displayProductInfo(productId, product) {
-        // ...省略: 在庫追加/減少, メモ, url表示, 編集ボタンなど...
+        const itemDiv = document.createElement("div");
+        itemDiv.classList.add("result-item");
+
+        // 1. title
+        const titleEl = document.createElement("h3");
+        titleEl.textContent = product.title || "商品名不明";
+        itemDiv.appendChild(titleEl);
+
+        // 2. barcode
+        const barcodeEl = document.createElement("p");
+        barcodeEl.textContent = `バーコード: ${product.barcode || ""}`;
+        itemDiv.appendChild(barcodeEl);
+
+        // 3. place
+        const placeEl = document.createElement("p");
+        placeEl.textContent = `場所: ${product.place || ""}`;
+        itemDiv.appendChild(placeEl);
+
+        // 4. stock
+        const stockEl = document.createElement("p");
+        stockEl.textContent = `在庫数: ${product.stock || 0}`;
+        itemDiv.appendChild(stockEl);
+
+        // 5. 在庫追加
+        const addRow = document.createElement("div");
+        addRow.classList.add("action-row");
+
+        const addInput = document.createElement("input");
+        addInput.type = "number";
+        addInput.value = 1;
+        addInput.min = 1;
+        addRow.appendChild(addInput);
+
+        const increaseButton = document.createElement("button");
+        increaseButton.textContent = "在庫追加";
+        increaseButton.addEventListener("click", () => {
+          const oldStock = product.stock || 0;
+          const quantity = parseInt(addInput.value, 10);
+          if (isNaN(quantity) || quantity < 1) {
+            alert("有効な数量を入力してください");
+            return;
+          }
+          const newStock = oldStock + quantity;
+          updateStock(productId, newStock, oldStock);
+        });
+        addRow.appendChild(increaseButton);
+
+        itemDiv.appendChild(addRow);
+
+        // 6. 在庫減少
+        const subtractRow = document.createElement("div");
+        subtractRow.classList.add("action-row");
+
+        const subtractInput = document.createElement("input");
+        subtractInput.type = "number";
+        subtractInput.value = 1;
+        subtractInput.min = 1;
+        subtractRow.appendChild(subtractInput);
+
+        const decreaseButton = document.createElement("button");
+        decreaseButton.textContent = "在庫減少";
+        decreaseButton.addEventListener("click", () => {
+          const oldStock = product.stock || 0;
+          const quantity = parseInt(subtractInput.value, 10);
+          if (isNaN(quantity) || quantity < 1) {
+            alert("有効な数量を入力してください");
+            return;
+          }
+          const newStock = Math.max(oldStock - quantity, 0);
+          updateStock(productId, newStock, oldStock);
+        });
+        subtractRow.appendChild(decreaseButton);
+
+        itemDiv.appendChild(subtractRow);
+
+        // 7. memo
+        const memoEl = document.createElement("p");
+        memoEl.textContent = `メモ: ${product.memo || ""}`;
+        itemDiv.appendChild(memoEl);
+
+        // 8. url (あればクリック可能リンクに)
+        const urlEl = document.createElement("p");
+        if (product.url) {
+          const link = document.createElement("a");
+          link.href = product.url;
+          link.target = "_blank";
+          link.rel = "noopener"; // セキュリティ対策
+          link.textContent = product.url;
+          urlEl.textContent = "URL: ";
+          urlEl.appendChild(link);
+        } else {
+          urlEl.textContent = "URL: (なし)";
+        }
+        itemDiv.appendChild(urlEl);
+
+        // 編集ボタン
+        const editButton = document.createElement("button");
+        editButton.textContent = "編集";
+        editButton.style.marginTop = "15px";
+
+        editButton.addEventListener("click", () => {
+          showEditForm(itemDiv, productId, product);
+        });
+
+        itemDiv.appendChild(editButton);
+
+        resultsContainer.appendChild(itemDiv);
       }
 
-      // 🔹 Firestoreの在庫更新処理 (既存)
+      // 🔹 Firestoreの在庫更新処理
       function updateStock(productId, newStock, oldStock) {
-        // ...省略: stock更新 + 履歴log
+        db.collection("products").doc(productId).update({ stock: newStock })
+          .then(() => {
+            alert("在庫を更新しました");
+            // 履歴に追加
+            logHistory({
+              productId: productId,
+              changeType: "在庫更新",
+              description: `在庫数: ${oldStock} → ${newStock}`
+            });
+            // 再検索して最新の在庫を表示
+            searchProduct(keywordInput.value);
+          })
+          .catch((error) => {
+            console.error("在庫更新エラー:", error);
+          });
       }
 
-      // 🔹 編集フォームを表示する (既存)
+      // 🔹 編集フォームを表示する
       function showEditForm(itemDiv, productId, product) {
-        // ...省略: title, barcode, place, stock, memo, url の編集フォーム
+        // すでにフォームがある場合は重複しないよう削除
+        const existingForm = itemDiv.querySelector(".edit-form");
+        if (existingForm) {
+          existingForm.remove();
+        }
+
+        const editForm = document.createElement("div");
+        editForm.classList.add("edit-form");
+
+        // タイトル
+        const labelTitle = document.createElement("label");
+        labelTitle.textContent = "タイトル";
+        const inputTitle = document.createElement("input");
+        inputTitle.type = "text";
+        inputTitle.value = product.title || "";
+        editForm.appendChild(labelTitle);
+        editForm.appendChild(inputTitle);
+
+        // バーコード
+        const labelBarcode = document.createElement("label");
+        labelBarcode.textContent = "バーコード";
+        const inputBarcode = document.createElement("input");
+        inputBarcode.type = "text";
+        inputBarcode.value = product.barcode || "";
+        editForm.appendChild(labelBarcode);
+        editForm.appendChild(inputBarcode);
+
+        // 場所
+        const labelPlace = document.createElement("label");
+        labelPlace.textContent = "場所";
+        const inputPlace = document.createElement("input");
+        inputPlace.type = "text";
+        inputPlace.value = product.place || "";
+        editForm.appendChild(labelPlace);
+        editForm.appendChild(inputPlace);
+
+        // 在庫数
+        const labelStock = document.createElement("label");
+        labelStock.textContent = "在庫数";
+        const inputStock = document.createElement("input");
+        inputStock.type = "number";
+        inputStock.value = product.stock || 0;
+        editForm.appendChild(labelStock);
+        editForm.appendChild(inputStock);
+
+        // メモ
+        const labelMemo = document.createElement("label");
+        labelMemo.textContent = "メモ";
+        const inputMemo = document.createElement("input");
+        inputMemo.type = "text";
+        inputMemo.value = product.memo || "";
+        editForm.appendChild(labelMemo);
+        editForm.appendChild(inputMemo);
+
+        // URL
+        const labelUrl = document.createElement("label");
+        labelUrl.textContent = "URL";
+        const inputUrl = document.createElement("input");
+        inputUrl.type = "text";
+        inputUrl.value = product.url || "";
+        editForm.appendChild(labelUrl);
+        editForm.appendChild(inputUrl);
+
+        // 保存ボタン
+        const saveButton = document.createElement("button");
+        saveButton.textContent = "保存";
+        saveButton.addEventListener("click", async () => {
+          const newTitle = inputTitle.value.trim();
+          const newBarcode = inputBarcode.value.trim();
+          const newPlace = inputPlace.value.trim();
+          const newStock = parseInt(inputStock.value, 10);
+          const newMemo = inputMemo.value.trim();
+          const newUrl = inputUrl.value.trim();
+
+          // 古い値
+          const oldData = {
+            title: product.title || "",
+            barcode: product.barcode || "",
+            place: product.place || "",
+            stock: product.stock || 0,
+            memo: product.memo || "",
+            url: product.url || ""
+          };
+          // 新しい値
+          const updatedData = {
+            title: newTitle,
+            barcode: newBarcode,
+            place: newPlace,
+            stock: isNaN(newStock) ? 0 : newStock,
+            memo: newMemo,
+            url: newUrl
+          };
+
+          try {
+            await db.collection("products").doc(productId).update(updatedData);
+
+            alert("更新しました");
+
+            // 履歴に追加（編集内容の差分をログ）
+            const diffText = buildChangeSummary(oldData, updatedData);
+            logHistory({
+              productId: productId,
+              changeType: "編集",
+              description: diffText
+            });
+
+            // 更新後、再検索して最新の状態を反映
+            searchProduct(keywordInput.value);
+          } catch (err) {
+            console.error("編集保存エラー:", err);
+            alert("編集の保存に失敗しました");
+          }
+        });
+
+        // キャンセルボタン
+        const cancelButton = document.createElement("button");
+        cancelButton.textContent = "キャンセル";
+        cancelButton.addEventListener("click", () => {
+          // フォームを閉じるだけ
+          editForm.remove();
+        });
+
+        editForm.appendChild(saveButton);
+        editForm.appendChild(cancelButton);
+
+        itemDiv.appendChild(editForm);
       }
 
-      // 🔹 変更点をまとめる（履歴表示用）(既存)
+      // 🔹 変更点をまとめる（履歴表示用）
       function buildChangeSummary(oldData, newData) {
-        // ...省略...
+        let messages = [];
+        if (oldData.title !== newData.title) {
+          messages.push(`タイトル: "${oldData.title}" → "${newData.title}"`);
+        }
+        if (oldData.barcode !== newData.barcode) {
+          messages.push(`バーコード: "${oldData.barcode}" → "${newData.barcode}"`);
+        }
+        if (oldData.place !== newData.place) {
+          messages.push(`場所: "${oldData.place}" → "${newData.place}"`);
+        }
+        if (oldData.stock !== newData.stock) {
+          messages.push(`在庫数: ${oldData.stock} → ${newData.stock}`);
+        }
+        if (oldData.memo !== newData.memo) {
+          messages.push(`メモ: "${oldData.memo}" → "${newData.memo}"`);
+        }
+        if (oldData.url !== newData.url) {
+          messages.push(`URL: "${oldData.url}" → "${newData.url}"`);
+        }
+
+        if (messages.length === 0) {
+          return "変更なし";
+        } else {
+          return messages.join(", ");
+        }
       }
 
-      // 🔹 ログを "history" コレクションに追加 (既存)
+      // 🔹 ログを "history" コレクションに追加
       function logHistory({ productId, changeType, description }) {
-        // ...省略...
+        db.collection("history").add({
+          productId: productId,
+          changeType: changeType,
+          description: description,
+          timestamp: firebase.firestore.FieldValue.serverTimestamp()
+        }).then(() => {
+          // 履歴を再読み込み
+          loadRecentHistory();
+        }).catch((err) => {
+          console.error("履歴書き込みエラー:", err);
+        });
       }
 
-      // 🔹 直近10件の履歴を読み込み、表示 (既存)
+      // 🔹 直近10件の履歴を読み込み、表示
       function loadRecentHistory() {
-        // ...省略...
+        const historyList = document.getElementById("historyList");
+        historyList.innerHTML = "読み込み中...";
+
+        db.collection("history")
+          .orderBy("timestamp", "desc")
+          .limit(10)
+          .get()
+          .then((snapshot) => {
+            if (snapshot.empty) {
+              historyList.innerHTML = "<p>履歴はありません</p>";
+              return;
+            }
+            let html = "";
+            snapshot.forEach(doc => {
+              const data = doc.data();
+              const time = data.timestamp ? data.timestamp.toDate().toLocaleString() : "日時不明";
+
+              // ProductIDを表示しない例
+              html += `
+                <div class="history-item">
+                  <strong>[${data.changeType}]</strong> (${time})<br>
+                  内容: ${data.description}
+                </div>
+              `;
+            });
+            historyList.innerHTML = html;
+          })
+          .catch(err => {
+            console.error("履歴読み込みエラー:", err);
+            historyList.innerHTML = "履歴を読み込めませんでした";
+          });
       }
 
-      // 🔹 CSV出力ボタン: 全ドキュメントをCSVダウンロード (既存)
+      // 🔹 CSV出力ボタン: 全ドキュメントをCSVダウンロード
       exportBtn.addEventListener("click", async () => {
-        // ...省略: CSV出力ロジック
+        try {
+          // Firestoreから全データを取得（productsコレクション全件）
+          const snapshot = await db.collection("products").get();
+
+          if (snapshot.empty) {
+            alert("出力するデータがありません");
+            return;
+          }
+
+          // CSVヘッダの定義
+          const headers = ["title", "barcode", "place", "stock", "memo", "url"];
+          let csvContent = headers.join(",") + "\n";
+
+          // 各ドキュメントをCSV行に変換
+          snapshot.forEach(doc => {
+            const data = doc.data();
+            // ダブルクォートで囲み、内部のクォートをエスケープ
+            const row = [
+              data.title || "",
+              data.barcode || "",
+              data.place || "",
+              data.stock != null ? data.stock : "",
+              data.memo || "",
+              data.url || ""
+            ].map(val => `"${val.replace(/"/g, '""')}"`)
+             .join(",");
+
+            csvContent += row + "\n";
+          });
+
+          // Blob化してダウンロード
+          const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+          const url = URL.createObjectURL(blob);
+
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "products_export.csv"; // ダウンロードファイル名
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+
+          URL.revokeObjectURL(url);
+          alert("CSVファイルをダウンロードしました。");
+        } catch (err) {
+          console.error("CSV出力エラー:", err);
+          alert("CSV出力に失敗しました");
+        }
       });
     });
   </script>
